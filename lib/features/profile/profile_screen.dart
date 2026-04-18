@@ -1,6 +1,7 @@
 // lib/features/profile/profile_screen.dart
 
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -28,13 +29,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ── Change Password State ───────────
   final _passFormKey = GlobalKey<FormState>();
-  final _currPassCtrl  = TextEditingController();
-  final _newPassCtrl   = TextEditingController();
-  final _confPassCtrl  = TextEditingController();
-  bool _passLoading    = false;
-  bool _showCurrPass   = false;
-  bool _showNewPass    = false;
-  bool _showConfPass   = false;
+  final _currPassCtrl = TextEditingController();
+  final _newPassCtrl  = TextEditingController();
+  final _confPassCtrl = TextEditingController();
+  bool _passLoading   = false;
+  bool _showCurrPass  = false;
+  bool _showNewPass   = false;
+  bool _showConfPass  = false;
+
+  // ── Photo preview (cross-platform) ──
+  Uint8List? _previewBytes; // Used for Image.memory preview (Web + Mobile)
 
   @override
   void initState() {
@@ -54,17 +58,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  // ── Foto Profil ─────────────────────
+  // ── Pick & Upload Photo ─────────────
   Future<void> _pickPhoto() async {
     final picker = ImagePicker();
 
-    void pickFrom(ImageSource source) async {
+    Future<void> pickFrom(ImageSource source) async {
       final picked = await picker.pickImage(
           source: source, imageQuality: 80, maxWidth: 512);
       if (picked == null || !mounted) return;
 
+      // Always read as bytes – works on Web, Android, and iOS
       final bytes = await picked.readAsBytes();
-      final success = await context.read<AuthProvider>().updatePhoto(
+
+      // Show local preview immediately using Image.memory
+      setState(() => _previewBytes = bytes);
+
+      // Read provider before async gap
+      final authProvider = context.read<AuthProvider>();
+      final success = await authProvider.updatePhoto(
         imageFile:     kIsWeb ? null : File(picked.path),
         imageBytes:    bytes,
         imageFilename: picked.name,
@@ -73,47 +84,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
       showAppSnackBar(
         context,
-        message: success ? 'Foto profil diperbarui.' : context.read<AuthProvider>().errorMessage,
+        message: success
+            ? 'Foto profil diperbarui.'
+            : authProvider.errorMessage,
         type: success ? SnackBarType.success : SnackBarType.error,
       );
+
+      // After upload, clear preview so server photo takes over
+      if (success && mounted) {
+        setState(() => _previewBytes = null);
+      }
     }
 
     if (kIsWeb) {
-      // Di web hanya ada galeri
-      pickFrom(ImageSource.gallery);
+      await pickFrom(ImageSource.gallery);
       return;
     }
 
-    // Mobile: tampilkan pilihan galeri / kamera
+    // Mobile: sheet
+    if (!mounted) return;
     showModalBottomSheet(
       context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Pilih dari Galeri'),
-              onTap: () {
-                Navigator.pop(ctx);
-                pickFrom(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt_outlined),
-              title: const Text('Ambil Foto'),
-              onTap: () {
-                Navigator.pop(ctx);
-                pickFrom(ImageSource.camera);
-              },
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36, height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Pilih dari Galeri'),
+                onTap: () { Navigator.pop(ctx); pickFrom(ImageSource.gallery); },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Ambil Foto'),
+                onTap: () { Navigator.pop(ctx); pickFrom(ImageSource.camera); },
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // ── Update Profile ──────────────────
+  // ── Submit Profile ──────────────────
   Future<void> _submitProfile() async {
     if (!_profileFormKey.currentState!.validate()) return;
     setState(() => _profileLoading = true);
@@ -125,7 +150,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (!mounted) return;
     setState(() => _profileLoading = false);
-
     showAppSnackBar(
       context,
       message: success
@@ -135,7 +159,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── Change Password ─────────────────
+  // ── Submit Password ─────────────────
   Future<void> _submitPassword() async {
     if (!_passFormKey.currentState!.validate()) return;
     setState(() => _passLoading = true);
@@ -147,7 +171,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (!mounted) return;
     setState(() => _passLoading = false);
-
     showAppSnackBar(
       context,
       message: success
@@ -168,6 +191,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (d) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Keluar'),
         content: const Text('Apakah kamu yakin ingin keluar dari akun?'),
         actions: [
@@ -216,7 +240,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ── Avatar Section ──
+          // ── Avatar Section ──────────────────────────
           Center(
             child: Column(
               children: [
@@ -224,84 +248,109 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onTap: _pickPhoto,
                   child: Stack(
                     children: [
+                      // Cross-platform avatar:
+                      // 1. Local preview with Image.memory (after picking, before upload completes)
+                      // 2. Server photo with NetworkImage
+                      // 3. Initials fallback
                       CircleAvatar(
-                        radius: 54,
+                        radius: 56,
                         backgroundColor: colorScheme.primaryContainer,
-                        backgroundImage: user?.urlPhoto != null
+                        backgroundImage: _previewBytes != null
+                            ? MemoryImage(_previewBytes!) as ImageProvider
+                            : (user?.urlPhoto != null
                             ? NetworkImage(user!.urlPhoto!)
-                            : null,
-                        child: user?.urlPhoto == null
+                            : null),
+                        child: (_previewBytes == null && user?.urlPhoto == null)
                             ? Text(
                           (user?.name.isNotEmpty == true)
                               ? user!.name[0].toUpperCase()
                               : '?',
                           style: TextStyle(
-                              fontSize: 36,
+                              fontSize: 38,
                               color: colorScheme.primary,
                               fontWeight: FontWeight.bold),
                         )
                             : null,
                       ),
+                      // Camera badge
                       Positioned(
-                        bottom: 0,
-                        right: 0,
+                        bottom: 2,
+                        right: 2,
                         child: Container(
-                          padding: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.all(7),
                           decoration: BoxDecoration(
                             color: colorScheme.primary,
                             shape: BoxShape.circle,
-                            border: Border.all(
-                                color: colorScheme.surface, width: 2),
+                            border: Border.all(color: colorScheme.surface, width: 2.5),
                           ),
-                          child: Icon(Icons.camera_alt,
-                              size: 16, color: colorScheme.onPrimary),
+                          child: Icon(Icons.camera_alt_rounded,
+                              size: 15, color: colorScheme.onPrimary),
                         ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 12),
-                Text(user?.name ?? '',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-                Text('@${user?.username ?? ''}',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: colorScheme.onSurfaceVariant)),
+                Text(
+                  user?.name ?? '',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '@${user?.username ?? ''}',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 6),
+                TextButton.icon(
+                  onPressed: _pickPhoto,
+                  icon: const Icon(Icons.edit_rounded, size: 14),
+                  label: const Text('Ubah Foto', style: TextStyle(fontSize: 13)),
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
 
-          // ── Edit Profil ──
+          // ── Edit Profil ─────────────────────────────
           _SectionCard(
             title: 'Edit Profil',
-            icon: Icons.person_outline,
+            icon: Icons.person_outline_rounded,
             child: Form(
               key: _profileFormKey,
               child: Column(
                 children: [
                   TextFormField(
                     controller: _nameCtrl,
+                    textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
                       labelText: 'Nama Lengkap',
+                      prefixIcon: Icon(Icons.badge_outlined),
                       border: OutlineInputBorder(),
                     ),
                     validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Nama tidak boleh kosong.' : null,
+                    (v == null || v.trim().isEmpty)
+                        ? 'Nama tidak boleh kosong.'
+                        : null,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   TextFormField(
                     controller: _userCtrl,
+                    textInputAction: TextInputAction.done,
                     decoration: const InputDecoration(
                       labelText: 'Username',
+                      prefixIcon: Icon(Icons.alternate_email_rounded),
                       border: OutlineInputBorder(),
                     ),
                     validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Username tidak boleh kosong.' : null,
+                    (v == null || v.trim().isEmpty)
+                        ? 'Username tidak boleh kosong.'
+                        : null,
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -312,7 +361,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ? const SizedBox(
                           width: 18, height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.save_outlined),
+                          : const Icon(Icons.save_rounded),
                       label: Text(_profileLoading ? 'Menyimpan...' : 'Simpan Profil'),
                     ),
                   ),
@@ -320,12 +369,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
 
-          // ── Ganti Kata Sandi ──
+          // ── Ganti Kata Sandi ────────────────────────
           _SectionCard(
             title: 'Ganti Kata Sandi',
-            icon: Icons.lock_outline,
+            icon: Icons.lock_outline_rounded,
             child: Form(
               key: _passFormKey,
               child: Column(
@@ -334,30 +383,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     controller: _currPassCtrl,
                     label: 'Kata Sandi Saat Ini',
                     show: _showCurrPass,
-                    onToggle: () =>
-                        setState(() => _showCurrPass = !_showCurrPass),
+                    onToggle: () => setState(() => _showCurrPass = !_showCurrPass),
                     validator: (v) =>
-                    (v == null || v.isEmpty) ? 'Kata sandi saat ini diperlukan.' : null,
+                    (v == null || v.isEmpty)
+                        ? 'Kata sandi saat ini diperlukan.'
+                        : null,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   _PasswordField(
                     controller: _newPassCtrl,
                     label: 'Kata Sandi Baru',
                     show: _showNewPass,
-                    onToggle: () =>
-                        setState(() => _showNewPass = !_showNewPass),
+                    onToggle: () => setState(() => _showNewPass = !_showNewPass),
                     validator: (v) =>
                     (v == null || v.trim().length < 6)
                         ? 'Minimal 6 karakter.'
                         : null,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   _PasswordField(
                     controller: _confPassCtrl,
                     label: 'Konfirmasi Kata Sandi Baru',
                     show: _showConfPass,
-                    onToggle: () =>
-                        setState(() => _showConfPass = !_showConfPass),
+                    onToggle: () => setState(() => _showConfPass = !_showConfPass),
                     validator: (v) =>
                     v != _newPassCtrl.text ? 'Kata sandi tidak cocok.' : null,
                   ),
@@ -370,7 +418,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ? const SizedBox(
                           width: 18, height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.key),
+                          : const Icon(Icons.key_rounded),
                       label: Text(_passLoading ? 'Mengubah...' : 'Ganti Kata Sandi'),
                     ),
                   ),
@@ -385,7 +433,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-// ── Helper Widgets ──────────────────────────────────────
+// ── Helper Widgets ────────────────────────────────────────
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
@@ -399,7 +447,13 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -407,8 +461,15 @@ class _SectionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, color: colorScheme.primary, size: 18),
+                ),
+                const SizedBox(width: 10),
                 Text(title,
                     style: Theme.of(context)
                         .textTheme
@@ -445,12 +506,15 @@ class _PasswordField extends StatelessWidget {
     return TextFormField(
       controller: controller,
       obscureText: !show,
+      textInputAction: TextInputAction.next,
       decoration: InputDecoration(
         labelText: label,
+        prefixIcon: const Icon(Icons.lock_outline_rounded),
         border: const OutlineInputBorder(),
         suffixIcon: IconButton(
-          icon: Icon(
-              show ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+          icon: Icon(show
+              ? Icons.visibility_off_outlined
+              : Icons.visibility_outlined),
           onPressed: onToggle,
         ),
       ),

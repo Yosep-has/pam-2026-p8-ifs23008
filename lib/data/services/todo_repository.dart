@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import '../models/api_response_model.dart';
 import '../models/todo_model.dart';
+import '../models/paginated_todo_model.dart';
 import 'todo_service.dart';
 
 class TodoRepository {
@@ -12,12 +13,31 @@ class TodoRepository {
 
   final TodoService _service;
 
-  Future<ApiResponse<List<TodoModel>>> getTodos({
+  Future<ApiResponse<PaginatedTodoModel>> getTodos({
     required String authToken,
     String search = '',
+    int page = 1,
+    int perPage = 10,
+    bool? isDone,
   }) async {
     try {
-      return await _service.getTodos(authToken: authToken, search: search);
+      return await _service.getTodos(
+        authToken: authToken,
+        search: search,
+        page: page,
+        perPage: perPage,
+        isDone: isDone,
+      );
+    } catch (e) {
+      return ApiResponse(success: false, message: 'Terjadi kesalahan jaringan: $e');
+    }
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> getStats({
+    required String authToken,
+  }) async {
+    try {
+      return await _service.getStats(authToken: authToken);
     } catch (e) {
       return ApiResponse(success: false, message: 'Terjadi kesalahan jaringan: $e');
     }

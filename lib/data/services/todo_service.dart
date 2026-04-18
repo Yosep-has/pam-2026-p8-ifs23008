@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../models/api_response_model.dart';
 import '../models/todo_model.dart';
+import '../models/paginated_todo_model.dart';
 import '../../core/constants/api_constants.dart';
 
 class TodoService {
@@ -22,32 +23,67 @@ class TodoService {
   };
 
   // ─────────────────────────────────────────────
-  // GET /todos?search=
+  // GET /todos?search=&page=&perPage=&isDone=
   // ─────────────────────────────────────────────
-  Future<ApiResponse<List<TodoModel>>> getTodos({
+  Future<ApiResponse<PaginatedTodoModel>> getTodos({
     required String authToken,
     String search = '',
+    int page = 1,
+    int perPage = 10,
+    bool? isDone,
   }) async {
+    final params = <String, String>{
+      'page': '$page',
+      'perPage': '$perPage',
+    };
+    if (search.isNotEmpty) params['search'] = search;
+    if (isDone != null) params['isDone'] = '$isDone';
+
     final uri = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.todos}')
-        .replace(queryParameters: search.isNotEmpty ? {'search': search} : null);
+        .replace(queryParameters: params);
 
     final response = await _client.get(uri, headers: _authHeader(authToken));
     final body = jsonDecode(response.body) as Map<String, dynamic>;
 
     if (response.statusCode == 200) {
       final data = body['data'] as Map<String, dynamic>;
-      final list = (data['todos'] as List<dynamic>)
+      final todosData = data['todos'] as Map<String, dynamic>;
+      final list = (todosData['items'] as List<dynamic>)
           .map((e) => TodoModel.fromJson(e as Map<String, dynamic>))
           .toList();
-      return ApiResponse(success: true, message: body['message'] as String, data: list);
+      final paginated = PaginatedTodoModel(
+        items: list,
+        page: todosData['page'] as int? ?? page,
+        perPage: todosData['perPage'] as int? ?? perPage,
+        total: todosData['total'] as int? ?? list.length,
+        totalPages: todosData['totalPages'] as int? ?? 1,
+        hasNextPage: todosData['hasNextPage'] as bool? ?? false,
+      );
+      return ApiResponse(success: true, message: body['message'] as String, data: paginated);
+    }
+    return ApiResponse(success: false, message: _parseError(response));
+  }
+
+  // ─────────────────────────────────────────────
+  // GET /todos/stats
+  // ─────────────────────────────────────────────
+  Future<ApiResponse<Map<String, dynamic>>> getStats({
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.todosStats}');
+    final response = await _client.get(uri, headers: _authHeader(authToken));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+    if (response.statusCode == 200) {
+      final data = body['data'] as Map<String, dynamic>;
+      final stats = data['stats'] as Map<String, dynamic>;
+      return ApiResponse(success: true, message: body['message'] as String, data: stats);
     }
     return ApiResponse(success: false, message: _parseError(response));
   }
 
   // ─────────────────────────────────────────────
   // POST /todos
-  // Body JSON: { title, description }
-  // Response: { data: { todoId } }
   // ─────────────────────────────────────────────
   Future<ApiResponse<String>> createTodo({
     required String authToken,
@@ -91,7 +127,6 @@ class TodoService {
 
   // ─────────────────────────────────────────────
   // PUT /todos/:id
-  // Body JSON: { title, description, isDone }
   // ─────────────────────────────────────────────
   Future<ApiResponse<void>> updateTodo({
     required String authToken,
@@ -116,8 +151,6 @@ class TodoService {
 
   // ─────────────────────────────────────────────
   // PUT /todos/:id/cover
-  // Multipart form-data, field: file
-  // Mendukung Web (Uint8List) dan Mobile (File)
   // ─────────────────────────────────────────────
   Future<ApiResponse<void>> updateTodoCover({
     required String authToken,

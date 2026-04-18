@@ -4,7 +4,7 @@ class ApiConstants {
   ApiConstants._();
 
   static const String baseUrl =
-      'https://pam-2026-p5-ifs18005-be.delcom.org:8080';
+      'https://pam-2026-p5-ifs23008-be.yosep.fun:8080/';
 
   // ── Auth ──────────────────────────────────
   static const String authRegister = '/auth/register';
@@ -18,7 +18,8 @@ class ApiConstants {
   static const String usersMePhoto    = '/users/me/photo';
 
   // ── Todos ─────────────────────────────────
-  static const String todos = '/todos';
+  static const String todos      = '/todos';
+  static const String todosStats = '/todos/stats';
   static String todoById(String id) => '/todos/$id';
   static String todoCover(String id) => '/todos/$id/cover';
 }
